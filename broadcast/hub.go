@@ -58,6 +58,7 @@ type Hub struct {
 	listenerChangeHook ListenerChangeHook
 
 	stationID     string
+	passthrough   bool         // copy source MP3 frames instead of re-encoding
 	currentTrack  atomic.Value // stores TrackInfo
 	listenerCount atomic.Int64
 }
@@ -146,6 +147,10 @@ func (h *Hub) Run(ctx context.Context) {
 	defer h.ring.Close()
 	if h.source == nil {
 		slog.Error("cannot run station without a track source", "station", h.stationID)
+		return
+	}
+	if h.passthrough {
+		h.runPassthrough(ctx)
 		return
 	}
 
@@ -359,13 +364,9 @@ func (h *Hub) publishEncoded(ctx context.Context, encoder io.Reader, transitions
 		return fmt.Errorf("create MP3 frame reader: %w", err)
 	}
 
-	epoch := time.Now()
+	p := newPacer()
+	defer p.stop()
 	var totalSamples int64
-	throttle := time.NewTimer(0)
-	if !throttle.Stop() {
-		<-throttle.C
-	}
-	defer throttle.Stop()
 
 	for {
 		frame, err := reader.ReadFrame()
@@ -375,7 +376,7 @@ func (h *Hub) publishEncoded(ctx context.Context, encoder io.Reader, transitions
 			}
 			return fmt.Errorf("read encoded MP3 frame: %w", err)
 		}
-		if frame.Version != 1 || frame.Layer != 3 || frame.Bitrate != transcode.OutputBitrate || frame.SampleRate != transcode.OutputSampleRate {
+		if !inStationProfile(frame) {
 			return fmt.Errorf(
 				"unexpected encoder profile: MPEG-%d layer %d, %d kbps, %d Hz",
 				frame.Version,
@@ -395,17 +396,8 @@ func (h *Hub) publishEncoded(ctx context.Context, encoder io.Reader, transitions
 		h.ring.WriteFrame(frame.Data, transition)
 
 		totalSamples += int64(frame.Samples)
-		rate := int64(frame.SampleRate)
-		elapsed := time.Duration(totalSamples/rate)*time.Second +
-			time.Duration(totalSamples%rate)*time.Second/time.Duration(rate)
-		deadline := epoch.Add(elapsed)
-		if wait := time.Until(deadline); wait > 0 {
-			throttle.Reset(wait)
-			select {
-			case <-throttle.C:
-			case <-ctx.Done():
-				return nil
-			}
+		if !p.wait(ctx, frame) {
+			return nil
 		}
 	}
 }

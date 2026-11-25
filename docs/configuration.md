@@ -89,3 +89,4 @@ Every station supports these fields:
 | `ad_every_n_songs` | int | Play an ad after every N music tracks |
 | `ad_every_n_minutes` | int | Play an ad after every N minutes |
 | `ad_shuffle` | bool | Randomize ad selection order |
+| `passthrough` | bool | Stream the files' MP3 frames as they are, without FFmpeg. Files must be MPEG-1 Layer III, 128 kbps CBR, 44.1 kHz; see [Passthrough Stations](features.md#passthrough-stations) |

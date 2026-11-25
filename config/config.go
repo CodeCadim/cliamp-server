@@ -24,6 +24,11 @@ type StationConfig struct {
 	Shuffle     bool   `toml:"shuffle"`
 	Recursive   bool   `toml:"recursive"`
 
+	// Passthrough streams the files' MP3 frames as they are, without FFmpeg.
+	// Every file must already be MPEG-1 Layer III, 128 kbps CBR, 44.1 kHz;
+	// other files are skipped. Costs almost no CPU per station.
+	Passthrough bool `toml:"passthrough"`
+
 	// ExposeTracks publishes the station's library as individual files at
 	// /{station}/tracks. Off by default: streaming a library and offering it
 	// as downloads are different things, so an operator must opt in per station.
@@ -195,4 +200,15 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// NeedsFFmpeg reports whether any station decodes or encodes audio: stations
+// without passthrough, and station intros, which are transcoded per listener.
+func (c *Config) NeedsFFmpeg() bool {
+	for _, st := range c.Stations {
+		if !st.Passthrough || st.IntroFile != "" {
+			return true
+		}
+	}
+	return false
 }

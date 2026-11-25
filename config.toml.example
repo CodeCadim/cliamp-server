@@ -29,6 +29,10 @@ url = ""
 path = "/music/pop"
 shuffle = true
 recursive = true
+# passthrough = true                         # Copy MP3 frames as-is, no FFmpeg:
+                                              # near-zero CPU, but files must be
+                                              # 128 kbps CBR 44.1 kHz MP3
+                                              # (scripts/passthrough-convert.sh).
 # expose_tracks = true                        # Publish the library as individual
                                               # files: /pop/tracks (JSON index),
                                               # /pop/tracks.m3u, /pop/tracks/{id}.

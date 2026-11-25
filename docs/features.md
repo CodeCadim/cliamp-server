@@ -19,6 +19,24 @@ Streaming requires `ffmpeg` with `libmp3lame` to be installed and available on `
 
 Track metadata (title, artist, album) is read from ID3 tags. Files without tags fall back to the filename as the title.
 
+## Passthrough Stations
+
+The continuous encoder costs CPU for every station, whether or not anyone is listening: each one runs two FFmpeg processes around the clock. On small servers this caps the number of stations.
+
+With `passthrough = true`, a station skips FFmpeg entirely and copies the MP3 frames of its files straight to listeners, paced in real time. A station then costs almost no CPU and a few megabytes of memory.
+
+The library must already be in the station profile: MPEG-1 Layer III, 128 kbps CBR, 44.1 kHz. Tracks in any other format are skipped with a warning. ID3v2 tags and the encoder's Xing/Info header frame are not sent.
+
+`scripts/passthrough-convert.sh SRC DST` prepares a library: it mirrors `SRC` into `DST`, copies files already in the profile untouched and re-encodes the rest, keeping tags. Re-runs only process new or changed files.
+
+```
+scripts/passthrough-convert.sh ~/music ~/music-128k
+```
+
+Trade-off: each file carries the encoder's start delay and end padding, so passthrough stations have a short gap (about 50 ms) between tracks, where transcoded stations are gapless.
+
+FFmpeg is not needed at runtime when every station uses passthrough and none has an `intro_file`.
+
 ## Ad Scheduling
 
 Ads are injected between music tracks based on two independent triggers. Either one firing will cause the next track to be an ad:

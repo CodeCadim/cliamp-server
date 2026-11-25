@@ -68,9 +68,11 @@ func main() {
 		slog.Error("invalid config", "error", err)
 		os.Exit(1)
 	}
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		slog.Error("ffmpeg is required", "error", err)
-		os.Exit(1)
+	if cfg.NeedsFFmpeg() {
+		if _, err := exec.LookPath("ffmpeg"); err != nil {
+			slog.Error("ffmpeg is required", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -124,6 +126,10 @@ func main() {
 		}
 
 		hub := broadcast.NewHub(id, source, cfg.Stream.BufferSize, cfg.Stream.MaxListeners)
+		hub.SetPassthrough(stCfg.Passthrough)
+		if stCfg.Passthrough {
+			slog.Info("passthrough enabled", "station", id)
+		}
 
 		go hub.Run(ctx)
 
