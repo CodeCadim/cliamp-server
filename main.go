@@ -101,6 +101,14 @@ func main() {
 			tracks = filtered
 		}
 
+		if stCfg.Passthrough {
+			tracks = passthroughTracks(id, tracks)
+			if len(tracks) == 0 {
+				slog.Error("no track in the passthrough profile, station disabled", "station", id, "path", stCfg.Path)
+				continue
+			}
+		}
+
 		if len(tracks) == 0 {
 			slog.Error("no MP3 files found", "station", id, "path", stCfg.Path)
 			os.Exit(1)
@@ -140,6 +148,19 @@ func main() {
 			Tracks:     tracks,
 		}
 	}
+
+	if len(stations) == 0 {
+		slog.Error("no station can stream")
+		os.Exit(1)
+	}
+	// Drop disabled stations from the ordered directory.
+	order := cfg.StationOrder[:0]
+	for _, id := range cfg.StationOrder {
+		if _, ok := stations[id]; ok {
+			order = append(order, id)
+		}
+	}
+	cfg.StationOrder = order
 
 	// Open optional GeoIP database
 	var geoDB *geo.DB
@@ -238,4 +259,22 @@ func main() {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// passthroughTracks keeps the tracks a passthrough station can stream as they
+// are, and logs each rejected file once so it can be converted.
+func passthroughTracks(stationID string, tracks []library.Track) []library.Track {
+	kept := tracks[:0]
+	for _, t := range tracks {
+		if err := broadcast.CheckPassthrough(t.Path); err != nil {
+			slog.Warn("track skipped by passthrough station", "station", stationID, "path", t.Path, "error", err)
+			continue
+		}
+		kept = append(kept, t)
+	}
+	if skipped := len(tracks) - len(kept); skipped > 0 {
+		slog.Warn("passthrough station skipped tracks, convert them with scripts/passthrough-convert.sh",
+			"station", stationID, "kept", len(kept), "skipped", skipped)
+	}
+	return kept
 }

@@ -1,7 +1,6 @@
 package broadcast
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -77,9 +76,7 @@ func (h *Hub) playFrames(ctx context.Context, p *pacer, track library.Track) (in
 			continue
 		}
 		if !inStationProfile(frame) {
-			return published, fmt.Errorf("%w: MPEG-%d layer %d, %d kbps, %d Hz (want MPEG-1 layer 3, %d kbps, %d Hz)",
-				errTrackProfile, frame.Version, frame.Layer, frame.Bitrate, frame.SampleRate,
-				transcode.OutputBitrate, transcode.OutputSampleRate)
+			return published, profileError(frame)
 		}
 
 		var transition *TrackInfo
@@ -106,17 +103,77 @@ func inStationProfile(f mp3frame.Frame) bool {
 // isInfoFrame reports whether f is the Xing/Info header frame encoders put at
 // the start of a file. It carries no audio meant for playback.
 func isInfoFrame(f mp3frame.Frame) bool {
-	// The tag follows the MPEG-1 side information: 17 bytes in mono
-	// (channel mode bits 7-6 of the fourth header byte == 3), 32 otherwise.
+	return infoTag(f) != ""
+}
+
+// infoTag returns "Xing" (LAME: VBR), "Info" (LAME: CBR) or "" when f is an
+// audio frame. The tag follows the MPEG-1 side information: 17 bytes in mono
+// (channel mode bits 7-6 of the fourth header byte == 3), 32 otherwise.
+func infoTag(f mp3frame.Frame) string {
 	off := 4 + 32
 	if f.Header[3]>>6 == 3 {
 		off = 4 + 17
 	}
 	if off+4 > len(f.Data) {
-		return false
+		return ""
 	}
-	tag := f.Data[off : off+4]
-	return bytes.Equal(tag, []byte("Xing")) || bytes.Equal(tag, []byte("Info"))
+	switch tag := string(f.Data[off : off+4]); tag {
+	case "Xing", "Info":
+		return tag
+	}
+	return ""
+}
+
+// passthroughCheckFrames is how many leading audio frames CheckPassthrough
+// inspects: enough to catch VBR files that lack a Xing header.
+const passthroughCheckFrames = 32
+
+// CheckPassthrough reports whether a passthrough station can stream path: a
+// CBR file (no Xing header) whose leading frames are in the station profile.
+// It reads a few kilobytes, so a whole library can be checked at startup.
+func CheckPassthrough(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	reader, err := mp3frame.NewReader(f)
+	if err != nil {
+		return err
+	}
+	checked := 0
+	for checked < passthroughCheckFrames {
+		frame, err := reader.ReadFrame()
+		if err != nil {
+			if checked > 0 && (errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)) {
+				return nil // short file, every frame was fine
+			}
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return errors.New("no MP3 audio frames")
+			}
+			return err
+		}
+		if checked == 0 {
+			switch infoTag(frame) {
+			case "Xing":
+				return fmt.Errorf("%w: variable bitrate (Xing header)", errTrackProfile)
+			case "Info":
+				continue
+			}
+		}
+		if !inStationProfile(frame) {
+			return profileError(frame)
+		}
+		checked++
+	}
+	return nil
+}
+
+func profileError(frame mp3frame.Frame) error {
+	return fmt.Errorf("%w: MPEG-%d layer %d, %d kbps, %d Hz (want MPEG-1 layer 3, %d kbps, %d Hz)",
+		errTrackProfile, frame.Version, frame.Layer, frame.Bitrate, frame.SampleRate,
+		transcode.OutputBitrate, transcode.OutputSampleRate)
 }
 
 // pacer releases frames at the rate their samples play back, measured from a

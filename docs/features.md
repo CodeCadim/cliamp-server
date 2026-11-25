@@ -25,7 +25,7 @@ The continuous encoder costs CPU for every station, whether or not anyone is lis
 
 With `passthrough = true`, a station skips FFmpeg entirely and copies the MP3 frames of its files straight to listeners, paced in real time. A station then costs almost no CPU and a few megabytes of memory.
 
-The library must already be in the station profile: MPEG-1 Layer III, 128 kbps CBR, 44.1 kHz. Tracks in any other format are skipped with a warning. ID3v2 tags and the encoder's Xing/Info header frame are not sent.
+The library must already be in the station profile: MPEG-1 Layer III, 128 kbps CBR, 44.1 kHz. At startup each file's leading frames are checked; files in any other format (including VBR) are logged once and left out of the rotation, and a station with no valid file is disabled instead of stopping the server. ID3v2 tags and the encoder's Xing/Info header frame are not sent.
 
 `scripts/passthrough-convert.sh SRC DST` prepares a library: it mirrors `SRC` into `DST`, copies files already in the profile untouched and re-encodes the rest, keeping tags. Re-runs only process new or changed files.
 

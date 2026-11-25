@@ -3,7 +3,9 @@ package broadcast
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -202,4 +204,73 @@ func mustParse(t *testing.T, data []byte) mp3frame.Frame {
 	}
 	f.Data = data
 	return f
+}
+
+func TestCheckPassthrough(t *testing.T) {
+	dir := t.TempDir()
+	cbr := func(n int) [][]byte {
+		var frames [][]byte
+		for range n {
+			frames = append(frames, testFrame(t, 9, 0, false, 0x33))
+		}
+		return frames
+	}
+	xing := testFrame(t, 9, 0, false, 0)
+	copy(xing[4+32:], "Xing")
+	mixed := append(cbr(5), testFrame(t, 10, 0, false, 0x33)) // 160 kbps frame
+
+	tests := []struct {
+		name  string
+		parts [][]byte
+		ok    bool
+	}{
+		{"cbr with id3 and Info", append([][]byte{id3v2(32), testInfoFrame(t)}, cbr(40)...), true},
+		{"short cbr file", cbr(3), true},
+		{"vbr Xing header", append([][]byte{xing}, cbr(40)...), false},
+		{"bitrate change in leading frames", mixed, false},
+		{"192 kbps", [][]byte{testFrame(t, 11, 0, false, 0x33)}, false},
+		{"48 kHz", [][]byte{testFrame(t, 9, 1, false, 0x33)}, false},
+		{"not mp3", [][]byte{bytes.Repeat([]byte("RIFF"), 100)}, false},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeFile(t, dir, fmt.Sprintf("%d.mp3", i), tt.parts...)
+			err := CheckPassthrough(path)
+			if (err == nil) != tt.ok {
+				t.Fatalf("CheckPassthrough() error = %v, want ok=%v", err, tt.ok)
+			}
+		})
+	}
+}
+
+// TestCheckPassthroughRealEncodes checks the profile test against files
+// produced by FFmpeg/LAME, including the converter's exact settings.
+func TestCheckPassthroughRealEncodes(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg is not installed")
+	}
+	dir := t.TempDir()
+	encode := func(name string, args ...string) string {
+		path := filepath.Join(dir, name)
+		cmd := exec.Command(ffmpeg, append(append([]string{"-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=3"}, args...), path)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("encode %s: %v: %s", name, err, out)
+		}
+		return path
+	}
+	tests := []struct {
+		path string
+		ok   bool
+	}{
+		{encode("converter.mp3", "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-ac", "2", "-id3v2_version", "3", "-write_id3v1", "0"), true},
+		{encode("vbr.mp3", "-c:a", "libmp3lame", "-q:a", "2"), false},
+		{encode("320k.mp3", "-c:a", "libmp3lame", "-b:a", "320k"), false},
+		{encode("48k.mp3", "-c:a", "libmp3lame", "-b:a", "128k", "-ar", "48000"), false},
+	}
+	for _, tt := range tests {
+		if err := CheckPassthrough(tt.path); (err == nil) != tt.ok {
+			t.Errorf("%s: CheckPassthrough() error = %v, want ok=%v", filepath.Base(tt.path), err, tt.ok)
+		}
+	}
 }
